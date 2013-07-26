@@ -1,0 +1,15 @@
+
+DEFAULTS {
+	personality = oltp;
+	description = "Oracle Database";
+        dir = /rmc/data;
+        stats = /tmp/stats;
+	filesystem = extfs;
+}
+
+CONFIG oracle {
+	function = generic;
+        runtime = 300;
+        filesize = 200m;
+}
+

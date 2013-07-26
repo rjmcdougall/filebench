@@ -1,0 +1,301 @@
+flowop_library.c
+1710a1711
+> 	filebench_log(LOG_DEBUG_IMPL, "flowoplib_openfile()");
+1734a1736,1737
+> 	filebench_log(LOG_DEBUG_IMPL, "flowoplib_openfile_common()");
+> 
+1754,1794c1757
+< #ifdef HAVE_RAW_SUPPORT
+< 	if (flowop->fo_fileset->fs_attrs & FILESET_IS_RAW_DEV) {
+< 		int open_attrs = 0;
+< 		char name[MAXPATHLEN];
+< 
+< 		(void) strcpy(name, *flowop->fo_fileset->fs_path);
+< 		(void) strcat(name, "/");
+< 		(void) strcat(name, flowop->fo_fileset->fs_name);
+< 
+< 		if (*flowop->fo_dsync) {
+< #ifdef sun
+< 			open_attrs |= O_DSYNC;
+< #else
+< 			open_attrs |= O_FSYNC;
+< #endif
+< 		}
+< 
+< 		filebench_log(LOG_DEBUG_SCRIPT,
+< 		    "open raw device %s flags %d = %d", name, open_attrs, fd);
+< 
+< 		threadflow->tf_fd[fd] = open64(name,
+< 		    O_RDWR | open_attrs, 0666);
+< 
+< 		if (threadflow->tf_fd[fd] < 0) {
+< 			filebench_log(LOG_ERROR,
+< 			    "Failed to open raw device %s: %s",
+< 			    name, strerror(errno));
+< 			return (-1);
+< 		}
+< 
+< 		/* if running on Solaris, use un-buffered io */
+< #ifdef sun
+< 		(void) directio(threadflow->tf_fd[fd], DIRECTIO_ON);
+< #endif
+< 
+< 		threadflow->tf_fse[fd] = NULL;
+< 
+< 		return (0);
+< 	}
+< #endif /* HAVE_RAW_SUPPORT */
+< 
+---
+> 	filebench_log(LOG_DEBUG_IMPL, "flowoplib_openfile_common() about to pick");
+fileset.c
+406,413c406,420
+< 	(void) strcpy(path, *fileset->fs_path);
+< 	(void) strcat(path, "/");
+< 	(void) strcat(path, fileset->fs_name);
+< 	pathtmp = fileset_resolvepath(entry);
+< 	(void) strcat(path, pathtmp);
+< 	(void) strcpy(dir, path);
+< 	free(pathtmp);
+< 	(void) trunc_dirname(dir);
+---
+> 
+> 	if (fileset->fs_attrs & FILESET_IS_RAW_DEV) {
+> 		(void) strcpy(path, entry->fse_path);
+> 
+> 	} else {
+> 
+> 		(void) strcpy(path, *fileset->fs_path);
+> 		(void) strcat(path, "/");
+> 		(void) strcat(path, fileset->fs_name);
+> 		pathtmp = fileset_resolvepath(entry);
+> 		(void) strcat(path, pathtmp);
+> 		(void) strcpy(dir, path);
+> 		free(pathtmp);
+> 		(void) trunc_dirname(dir);
+> 	}
+480a488,489
+> 	filebench_log(LOG_DEBUG_IMPL, "Picking");
+> 
+482a492,493
+> 		filebench_log(LOG_DEBUG_IMPL, "Pick looking...");
+> 
+595d605
+< #ifdef HAVE_RAW_SUPPORT
+599d608
+< #endif /* HAVE_RAW_SUPPORT */
+757c766,767
+<  * for the path string cannot be allocated.
+---
+>  * for the path string cannot be allocated, or if a RAW device
+>  * cannot be located.
+760c770,771
+< fileset_populate_file(fileset_t *fileset, filesetentry_t *parent, int serial)
+---
+> fileset_populate_file(fileset_t *fileset, filesetentry_t *parent, 
+> 	char *path, int serial)
+765a777,779
+> 	struct stat64 sb;
+> 	int fd;
+> 	
+778d791
+< 	fileset_insfilelist(fileset, entry);
+780,785d792
+< 	(void) snprintf(tmpname, sizeof (tmpname), "%08d", serial);
+< 	if ((entry->fse_path = (char *)ipc_pathalloc(tmpname)) == NULL) {
+< 		filebench_log(LOG_ERROR,
+< 		    "fileset_populate_file: Can't alloc path string");
+< 		return (-1);
+< 	}
+787,791c794,820
+< 	gamma = *(fileset->fs_sizegamma) / 1000.0;
+< 
+< 	if (gamma > 0) {
+< 		drand = gamma_dist_knuth(gamma, fileset->fs_meansize / gamma);
+< 		entry->fse_size = (off64_t)drand;
+---
+> 	/* RAW File name */
+> 	if (path) {
+> 	        /* check for raw device */
+> 		fd = open(path, O_RDONLY);
+>        	 	if ((fstat64(fd, &sb) == 0) &&
+>        	     	((sb.st_mode & S_IFMT) == S_IFBLK) && sb.st_rdev) {
+> 			entry->fse_size = lseek64(fd, 0, SEEK_END);
+> 			close(fd);
+>                 	fileset->fs_attrs |= FILESET_IS_RAW_DEV;
+> 			filebench_log(LOG_INFO,
+> 		    	"RAW device for %s on %s size %lld",
+> 			fileset->fs_name, path, entry->fse_size);
+> 		} else {
+> 			filebench_log(LOG_ERROR,
+> 		    		"fileset_populate_file: Cannot open RAW device %s",
+> 				path);
+> 			close(fd);
+>                 	return (-1);
+> 		}
+> 		
+> 		entry->fse_flags &= FSE_FREE;
+> 		entry->fse_flags |= FSE_EXISTS;
+> 		if ((entry->fse_path = (char *)ipc_pathalloc(path)) == NULL) {
+> 			filebench_log(LOG_ERROR,
+> 			    "fileset_populate_file: Can't alloc path string");
+> 			return (-1);
+> 		}
+793c822,835
+< 		entry->fse_size = (off64_t)fileset->fs_meansize;
+---
+> 		(void) snprintf(tmpname, sizeof (tmpname), "%08d", serial);
+> 		gamma = *(fileset->fs_sizegamma) / 1000.0;
+> 
+> 		if (gamma > 0) {
+> 			drand = gamma_dist_knuth(gamma, fileset->fs_meansize / gamma);
+> 			entry->fse_size = (off64_t)drand;
+> 		} else {
+> 			entry->fse_size = (off64_t)fileset->fs_meansize;
+> 		}
+> 		if ((entry->fse_path = (char *)ipc_pathalloc(tmpname)) == NULL) {
+> 			filebench_log(LOG_ERROR,
+> 			    "fileset_populate_file: Can't alloc path string");
+> 			return (-1);
+> 		}
+795a838,840
+> 	fileset_insfilelist(fileset, entry);
+> 
+> 
+888c933
+< 			ret = fileset_populate_file(fileset, entry, i);
+---
+> 			ret = fileset_populate_file(fileset, entry, NULL, i);
+898a944,979
+>  * Populates a fileset with raw files entries. 
+>  * Returns 0 on success, or an error code from the
+>  * call to fileset_populate_subdir if that call fails.
+>  */
+> static int
+> fileset_populate_raw(fileset_t *fileset)
+> {
+> 	int nfiles = 0;
+> 	int meandirwidth = *(fileset->fs_dirwidth);
+> 	int ret;
+> 	char *raw = "raw:";
+> 	char *rawdevs = *fileset->fs_path;
+> 	char thisdev[1024];
+> 	char *next;
+> 	filesetentry_t *parent;
+> 
+> 	while (rawdevs = strstr (rawdevs, raw)) {
+> 
+> 		/* Locate the first raw: delimeter */
+> 		rawdevs += strlen ("raw:");
+> 		strcpy (thisdev, rawdevs);
+> 		if (next = strstr(thisdev, ","))
+> 			*next = (char)0;
+> 
+> 		/* Add the raw path to the fileset */
+> 		if (ret = fileset_populate_file(fileset, NULL, thisdev, nfiles++))
+> 			return(ret);
+> 	}
+> 
+> 	fileset->fs_realfiles = *(fileset->fs_entries) = nfiles;
+> 
+> 	return(0);
+> }
+> 
+> 
+> /*
+920,925d1000
+< #ifdef HAVE_RAW_SUPPORT
+< 	/* check for raw device */
+< 	if (fileset->fs_attrs & FILESET_IS_RAW_DEV)
+< 		return (0);
+< #endif /* HAVE_RAW_SUPPORT */
+< 
+1024a1100
+> 
+1043,1044c1119,1134
+< 			if ((ret = fileset_populate(list)) != 0)
+< 				return (ret);
+---
+> 
+> 			/* Check if RAW */
+> 			if (list->fs_attrs & FILESET_IS_RAW_DEV) {
+> 				filebench_log(LOG_DEBUG_IMPL,
+> 				    "configuring file set as RAW %s %s",
+> 				    fileset_entity_name(list), list->fs_name);
+> 	
+> 				if ((ret = fileset_populate_raw(list)) != 0)
+> 					return (ret);
+> 
+> 			} else {
+> 
+> 				if ((ret = fileset_populate(list)) != 0)
+> 					return (ret);
+> 			}
+> 
+1169,1171d1258
+< 	char path[MAXPATHLEN];
+< 	struct stat64 sb;
+< 
+1174d1260
+< #ifdef HAVE_RAW_SUPPORT
+1176,1180c1262
+< 	(void) strcpy(path, *fileset->fs_path);
+< 	(void) strcat(path, "/");
+< 	(void) strcat(path, fileset->fs_name);
+< 	if ((stat64(path, &sb) == 0) &&
+< 	    ((sb.st_mode & S_IFMT) == S_IFBLK) && sb.st_rdev) {
+---
+> 	if (strstr(*fileset->fs_path, "raw:") != NULL) {
+1184,1185d1265
+< #endif /* HAVE_RAW_SUPPORT */
+< 
+parser_gram.y
+1859,1867d1858
+< 	/* if a raw device, Error */
+< 	if (fileset_checkraw(fileset)) {
+< 		filebench_log(LOG_ERROR,
+< 		    "Fileset %s/%s: Cannot create a fileset on a RAW device",
+< 		    *fileset->fs_path, fileset->fs_name);
+< 		filebench_shutdown(0);
+< 		return;
+< 	}
+< 
+1884a1876,1885
+> 	/* if a raw device, set count to zero for now */
+> 	if (fileset_checkraw(fileset)) {
+> 		fileset->fs_dirwidth = integer_alloc(0);
+> 		fileset->fs_entries = integer_alloc(0);
+> 		fileset->fs_dirwidth = integer_alloc(0);
+> 		fileset->fs_dirgamma = integer_alloc(1500);
+> 		fileset->fs_sizegamma = integer_alloc(1500);
+> 		return;
+> 	}
+>  
+parser_lex.l
+245c245
+< <INITIAL>[/A-Za-z-][/A-Za-z0-9._-]*	{
+---
+> <INITIAL>[/A-Za-z-][:/A-Za-z0-9._-]*	{
+ipc.c
+275d274
+< #ifdef HAVE_SEM_RMID
+277d275
+< #endif
+358d355
+< #ifdef HAVE_SEM_RMID
+361d357
+< #endif
+726,728c722
+< #ifdef HAVE_SEM_RMID
+< 	(void) shmctl(filebench_shm->shm_id, IPC_RMID, 0);
+< #endif
+---
+> 	(void) shmctl(tmp_shmid, IPC_RMID, 0);
+734c728
+< 		    filebench_shm->shm_id, size);
+---
+> 		    size, filebench_shm->shm_id);
+846d839
+< #ifdef HAVE_SEM_RMID
+848d840
+< #endif

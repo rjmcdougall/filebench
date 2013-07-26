@@ -1,0 +1,33 @@
+while read file 
+do
+	echo $file
+	diff ../filebench-1.1.0-full_build/$file $file
+done <<EOF
+filebench/flowop_library.c
+filebench/fileset.c
+filebench/parser_gram.y
+filebench/parser_lex.l
+filebench/ipc.c
+filebench/filebench.h
+filebench/flowop.c
+filebench/threadflow.h
+filebench/Makefile.am
+filebench/Makefile.in
+filebench/Makefile
+filebench/flowop_library.c
+filebench/fileset.c
+config.h
+Makefile.am
+configure.in
+aclocal.m4
+configure
+Makefile.in
+Makefile
+workloads/oltp.f
+workloads/Makefile
+workloads/Makefile.in
+bin/filebench
+bin/Makefile
+bin/Makefile.am
+bin/Makefile.in
+EOF
